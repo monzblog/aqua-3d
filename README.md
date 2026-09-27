@@ -23,7 +23,7 @@
 
 ## Domain
 
-（公開時に決定）
+https://aqua-3d.monzblog.com
 
 ## Tech Stack
 
