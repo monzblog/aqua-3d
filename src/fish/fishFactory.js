@@ -291,7 +291,7 @@ export function createSpeciesMesh(spec, count, quality) {
   const finC = canvas(W, H);
   const glowC = spec.glow ? canvas(W, H) : null;
   const bctx = bodyC.getContext('2d');
-  const fctx = finC.getContext('2d');
+  const fctx = finC.getContext('2d', { willReadFrequently: true });
   const P = makePainter(spec, F, W, H);
   spec.paint(bctx, fctx, P, glowC ? glowC.getContext('2d') : null);
 
