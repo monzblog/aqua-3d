@@ -332,6 +332,8 @@ document.getElementById('fullscreen').addEventListener('click', (e) => {
 // ---------------------------------------------------------------------------
 function resize() {
   const w = window.innerWidth, h = window.innerHeight;
+  // 非表示の埋め込み等でサイズ 0 になるときは描画バッファを作り直さない
+  if (w === 0 || h === 0) return;
   renderer.setSize(w, h);
   composer.setSize(w, h);
   bloom.setSize(w / 2, h / 2);
@@ -356,6 +358,7 @@ function setPixelRatio(pr) {
 }
 function frame() {
   const dt = Math.min(clock.getDelta(), 0.05);
+  if (window.innerWidth === 0 || window.innerHeight === 0) return;
   tick(dt);
   managePerf(dt);
 }
