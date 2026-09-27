@@ -5,10 +5,38 @@ import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js'
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import { globalUniforms } from './shared.js';
+import { VolumetricLightPass } from './volumetric.js';
 import { createSpeciesMesh } from './fish/fishFactory.js';
 import { School } from './fish/school.js';
 import { buildFreshwater, FRESH_CONFIG } from './scenes/freshwater.js';
 import { buildMarine, MARINE_CONFIG } from './scenes/marine.js';
+
+// ---------------------------------------------------------------------------
+// 高さで色が変わる水の霞（水面近くは明るく、深いほど青く沈む）
+// ---------------------------------------------------------------------------
+THREE.ShaderChunk.fog_pars_vertex = THREE.ShaderChunk.fog_pars_vertex.replace(
+  'varying float vFogDepth;',
+  'varying float vFogDepth;\nvarying float vFogWorldY;'
+);
+THREE.ShaderChunk.fog_vertex = THREE.ShaderChunk.fog_vertex.replace(
+  'vFogDepth = - mvPosition.z;',
+  `vFogDepth = - mvPosition.z;
+  {
+    vec4 fogW = vec4(transformed, 1.0);
+    #ifdef USE_INSTANCING
+      fogW = instanceMatrix * fogW;
+    #endif
+    vFogWorldY = (modelMatrix * fogW).y;
+  }`
+);
+THREE.ShaderChunk.fog_pars_fragment = THREE.ShaderChunk.fog_pars_fragment.replace(
+  'varying float vFogDepth;',
+  'varying float vFogDepth;\nvarying float vFogWorldY;'
+);
+THREE.ShaderChunk.fog_fragment = THREE.ShaderChunk.fog_fragment.replace(
+  'gl_FragColor.rgb = mix( gl_FragColor.rgb, fogColor, fogFactor );',
+  'vec3 fogC = fogColor * mix(0.68, 1.22, smoothstep(0.0, 8.5, vFogWorldY));\n\tgl_FragColor.rgb = mix( gl_FragColor.rgb, fogC, fogFactor );'
+);
 
 // ---------------------------------------------------------------------------
 // 品質設定
@@ -38,10 +66,15 @@ const rt = new THREE.WebGLRenderTarget(window.innerWidth * pixelRatio, window.in
   type: THREE.HalfFloatType,
   samples: quality.low ? 2 : 4,
 });
+// 光の柱の計算にシーンの深度を使う
+rt.depthTexture = new THREE.DepthTexture(rt.width, rt.height);
 const composer = new EffectComposer(renderer, rt);
 composer.setPixelRatio(pixelRatio);
 const renderPass = new RenderPass(new THREE.Scene(), camera);
 composer.addPass(renderPass);
+// 水面から差し込む光の柱（深度が必要なので RenderPass の直後）
+const volLight = new VolumetricLightPass(camera, { steps: quality.low ? 18 : 32, scale: quality.low ? 0.35 : 0.5 });
+composer.addPass(volLight);
 // NaN / 極端な値がブルームで画面全体に広がらないようにする
 composer.addPass(
   new ShaderPass({
@@ -225,6 +258,10 @@ function applyMode(key) {
   bloom.strength = c.bloom.strength;
   bloom.radius = c.bloom.radius;
   bloom.threshold = c.bloom.threshold;
+  volLight.intensity = c.volume.intensity;
+  volLight.color.set(c.volume.color);
+  volLight.march.uniforms.uCoverage.value = c.volume.coverage;
+  volLight.lightDir.set(...c.sun.pos).normalize().negate();
   toggleBtn.setAttribute('aria-label', MODES[key].label);
   toggleBtn.title = MODES[key].label;
   toggleBtn.dataset.mode = key;
@@ -299,13 +336,70 @@ function resize() {
 window.addEventListener('resize', resize);
 
 const clock = new THREE.Clock();
-let frameTimes = [];
-let lastAdapt = 0;
 let t = 0;
-function frame() {
-  tick(Math.min(clock.getDelta(), 0.05));
+// 解像度調整：起動時のフェード中に一度だけ計測して決める。
+// 実行中は長く重い状態が続いたときだけ、フェードで隠して一段下げる（描画バッファ再確保のちらつき防止）
+const perf = { phase: 'warmup', t0: 0, samples: [], lastDrop: 0, busy: false };
+let onCalibrated = null;
+function setPixelRatio(pr) {
+  pixelRatio = pr;
+  renderer.setPixelRatio(pr);
+  composer.setPixelRatio(pr);
+  resize();
 }
-function tick(dt, adapt = true) {
+function frame() {
+  const dt = Math.min(clock.getDelta(), 0.05);
+  tick(dt);
+  managePerf(dt);
+}
+function managePerf(dt) {
+  perf.t0 += dt;
+  if (perf.phase === 'warmup') {
+    if (perf.t0 > 0.6) {
+      perf.phase = 'calibrate';
+      perf.t0 = 0;
+      perf.samples.length = 0;
+    }
+    return;
+  }
+  perf.samples.push(dt);
+  if (perf.phase === 'calibrate') {
+    if (perf.t0 < 1.2) return;
+    const avg = median(perf.samples);
+    // 目標 55fps。足りない分だけ面積比で解像度を下げる
+    const target = 1 / 55;
+    if (avg > target) setPixelRatio(Math.max(0.75, Math.min(pixelRatio, pixelRatio * Math.sqrt(target / avg))));
+    perf.phase = 'run';
+    perf.t0 = 0;
+    perf.samples.length = 0;
+    if (onCalibrated) onCalibrated();
+    return;
+  }
+  if (perf.samples.length > 600) perf.samples.shift();
+  if (perf.busy || perf.samples.length < 600 || t - perf.lastDrop < 30 || pixelRatio <= 0.75) return;
+  const avg = median(perf.samples);
+  if (avg > 1 / 30) {
+    perf.busy = true;
+    perf.lastDrop = t;
+    fade.classList.add('quick', 'on');
+    setTimeout(() => {
+      setPixelRatio(Math.max(0.75, pixelRatio - 0.2));
+      perf.samples.length = 0;
+      requestAnimationFrame(() => {
+        fade.classList.remove('on');
+        setTimeout(() => {
+          fade.classList.remove('quick');
+          perf.busy = false;
+        }, 400);
+      });
+    }, 320);
+  }
+}
+function median(a) {
+  const s = [...a].sort((x, y) => x - y);
+  return s[Math.floor(s.length / 2)];
+}
+function tick(dt) {
   t += dt;
   globalUniforms.uTime.value = t;
   finalPass.uniforms.uTime.value = t;
@@ -318,21 +412,6 @@ function tick(dt, adapt = true) {
     for (const s of current.schools) s.update(dt, t, current.schools);
   }
   composer.render();
-
-  // 動的解像度
-  if (!adapt) return;
-  frameTimes.push(dt);
-  if (frameTimes.length > 90) frameTimes.shift();
-  if (t - lastAdapt > 3 && frameTimes.length >= 90) {
-    const avg = frameTimes.reduce((a, b) => a + b, 0) / frameTimes.length;
-    if (avg > 1 / 42 && pixelRatio > 0.75) {
-      pixelRatio = Math.max(0.75, pixelRatio - 0.2);
-      renderer.setPixelRatio(pixelRatio);
-      composer.setPixelRatio(pixelRatio);
-      resize();
-    }
-    lastAdapt = t;
-  }
 }
 
 // ---------------------------------------------------------------------------
@@ -354,16 +433,20 @@ setTimeout(() => {
   applyMode(startKey);
   resize();
   renderer.compile(current.scene, camera);
+  // フェードをかけたまま解像度を決めてから見せる
+  onCalibrated = () => {
+    onCalibrated = null;
+    loading.classList.remove('on');
+    setTimeout(() => fade.classList.remove('on'), 120);
+    pokeUI();
+  };
   renderer.setAnimationLoop(frame);
-  loading.classList.remove('on');
-  setTimeout(() => fade.classList.remove('on'), 200);
-  pokeUI();
 }, 60);
 
 if (import.meta.env.DEV) {
   // 開発時の確認用: 指定サイズで数フレーム進めて PNG を保存
   window.__aqua = {
-    renderer, composer, camera, bloom, THREE,
+    renderer, composer, camera, bloom, volLight, THREE,
     get current() { return current; },
     switchMode,
     tick,
@@ -376,7 +459,7 @@ if (import.meta.env.DEV) {
       renderer.setPixelRatio(1);
       composer.setPixelRatio(1);
       resize();
-      for (let i = 0; i < frames; i++) tick(1 / 30, false);
+      for (let i = 0; i < frames; i++) tick(1 / 30);
       if (cam) {
         camera.position.set(...cam.pos);
         camera.lookAt(...cam.look);
