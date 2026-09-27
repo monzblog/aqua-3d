@@ -71,11 +71,11 @@ npm run build    # dist/ に静的ファイルを出力
 
 ## Roadmap
 
-- [ ] 公開（Cloudflare Pages）
+- [x] 公開（Cloudflare Pages）
 - [ ] 魚をタップすると名前が出るモード（任意で ON）
 - [ ] 岩や水草が光を遮って、光の柱に影の筋ができる表現
 - [ ] 水草の量を端末性能に合わせて自動調整
 
 ## Status
 
-公開準備中（labs）
+公開中（apps）— https://aqua-3d.monzblog.com
