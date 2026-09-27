@@ -11,8 +11,10 @@ export const MARINE_CONFIG = {
   focusX: -0.6,
   portrait: { hv: 9.2, camY: 4.3, lookY: 3.95 },
   fog: { color: '#12548c', density: 0.034 },
-  sun: { color: '#eaf4ff', intensity: 3.5, pos: [-5, 24, 8] },
-  hemi: { sky: '#7ab8ff', ground: '#1a2848', intensity: 0.6 },
+  sun: { color: '#eef6ff', intensity: 4.4, pos: [-9, 28, 5] },
+  sunEntry: [-2.5, -2.5],
+  volume: { intensity: 0.4, color: '#dff0ff', coverage: 0.3 },
+  hemi: { sky: '#7ab8ff', ground: '#142040', intensity: 0.45 },
   env: { top: '#d0ecff', mid: '#2a6aa8', bottom: '#0a1830' },
   caustic: { strength: 1.9, color: '#eaf6ff' },
   exposure: 0.95,
@@ -216,8 +218,8 @@ export function buildMarine(quality) {
 
   // ---------------- 環境 ----------------
   group.add(createBackdrop({ top: '#031630', mid: '#135696', bottom: '#3f9ccf', glow: '#1a4a78', glowX: 0, glowY: 0.25, z: -8 }));
-  group.add(createSurface({ y: S, deep: '#082e58', reflect: '#2270b0', sky: '#e4f6ff', fog: '#12548c', fogDensity: 0.034, edge: '#0b3564' }));
-  group.add(createLightRays({ color: '#e0f4ff', intensity: 0.12, count: quality.low ? 8 : 14, top: S, tilt: -0.25 }, rng));
+  group.add(createSurface({ y: S, deep: '#082e58', reflect: '#2270b0', sky: '#e4f6ff', fog: '#12548c', fogDensity: 0.034, edge: '#0b3564', sunXZ: MARINE_CONFIG.sunEntry, sunPower: 2.0 }));
+  group.add(createLightRays({ color: '#e8f6ff', intensity: 0.07, count: quality.low ? 6 : 10, top: S + 0.3, tilt: 0.3, centerX: MARINE_CONFIG.sunEntry[0] + 2, spread: 5 }, rng));
   group.add(createParticles({ count: quality.low ? 700 : 1500, color: '#e8f4ff', opacity: 0.5 }, rng));
   group.add(createBubbles([{ x: -10.5, y: 5.5, z: -3.2, count: 30, spread: 0.3, size: 0.7, speed: 1.4, height: S - 5.5 }], rng, S));
 

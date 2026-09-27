@@ -9,12 +9,14 @@ export const FRESH_CONFIG = {
   surfaceY: 8.2,
   focusX: -1.4,
   portrait: { hv: 9.8, camY: 4.4, lookY: 3.5 },
-  fog: { color: '#3f8e9e', density: 0.036 },
-  sun: { color: '#fff2d6', intensity: 3.9, pos: [-7, 24, 9] },
-  hemi: { sky: '#cdeeff', ground: '#3a3020', intensity: 0.5 },
+  fog: { color: '#2f7688', density: 0.036 },
+  sun: { color: '#fff2d6', intensity: 4.6, pos: [-9, 28, 5] },
+  sunEntry: [-3.5, -2.5],
+  volume: { intensity: 0.42, color: '#fff4d8', coverage: 0.3 },
+  hemi: { sky: '#cdeeff', ground: '#2a2418', intensity: 0.38 },
   env: { top: '#e8fbff', mid: '#6cc0d0', bottom: '#2a3a28' },
-  caustic: { strength: 1.35, color: '#fffbe8' },
-  exposure: 1.02,
+  caustic: { strength: 1.8, color: '#fffbe8' },
+  exposure: 1.0,
   bloom: { strength: 0.32, radius: 0.55, threshold: 0.82 },
   species: FRESH_SPECIES,
 };
@@ -281,9 +283,9 @@ export function buildFreshwater(quality) {
   group.add(createMoss(rng, [...mossWood, ...mossStone], { size: [0.14, 0.26], colors: ['#3e6a26', '#4f7a2a', '#5a8a30', '#34601f'] }));
 
   // ---------------- 環境 ----------------
-  group.add(createBackdrop({ top: '#0c3e56', mid: '#3f93a6', bottom: '#cbece4', glow: '#5a8a80', glowX: 0.02, glowY: 0.22, z: -8 }));
-  group.add(createSurface({ y: S, deep: '#12404c', reflect: '#4a98a4', sky: '#f0fdff', fog: '#3f8e9e', fogDensity: 0.036, edge: '#25677c' }));
-  group.add(createLightRays({ color: '#f0ffe8', intensity: 0.11, count: quality.low ? 8 : 14, top: S, tilt: -0.3 }, rng));
+  group.add(createBackdrop({ top: '#082f42', mid: '#2c7a8e', bottom: '#a8d8d0', glow: '#5a8a80', glowX: 0.02, glowY: 0.22, z: -8 }));
+  group.add(createSurface({ y: S, deep: '#12404c', reflect: '#4a98a4', sky: '#f0fdff', fog: '#2f7688', fogDensity: 0.036, edge: '#1c566a', sunXZ: FRESH_CONFIG.sunEntry, sunPower: 2.2 }));
+  group.add(createLightRays({ color: '#fff8e0', intensity: 0.07, count: quality.low ? 6 : 10, top: S + 0.3, tilt: 0.3, centerX: FRESH_CONFIG.sunEntry[0] + 2, spread: 5 }, rng));
   group.add(createParticles({ count: quality.low ? 600 : 1300, color: '#f4fff0', opacity: 0.45 }, rng));
 
   // 泡：CO2 ディフューザーと光合成の気泡

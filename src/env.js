@@ -71,6 +71,8 @@ export function createSurface(cfg) {
       uFogColor: { value: new THREE.Color(cfg.fog) },
       uFogDensity: { value: cfg.fogDensity ?? 0.03 },
       uEdge: { value: new THREE.Color(cfg.edge ?? cfg.fog) },
+      uSunXZ: { value: new THREE.Vector2(...(cfg.sunXZ ?? [-3, -2])) },
+      uSunPower: { value: cfg.sunPower ?? 5 },
     },
     vertexShader: /* glsl */ `
       varying vec3 vW;
@@ -82,6 +84,8 @@ export function createSurface(cfg) {
     fragmentShader: /* glsl */ `
       uniform float uTime;
       uniform vec3 uDeep, uReflect, uSky, uFogColor, uEdge;
+      uniform vec2 uSunXZ;
+      uniform float uSunPower;
       uniform float uFogDensity;
       varying vec3 vW;
       vec2 hash2(vec2 p) { p = vec2(dot(p, vec2(127.1, 311.7)), dot(p, vec2(269.5, 183.3))); return -1.0 + 2.0 * fract(sin(p) * 43758.5453); }
@@ -117,9 +121,16 @@ export function createSurface(cfg) {
         col += uSky * spark * 0.55;
         float caust = pow(max(0.0, h0 * 0.7 + 0.5), 6.0);
         col += uSky * caust * 0.35;
+        // 太陽が差し込む一帯：波で揺れる強い輝き（光芒の光源になる）
+        vec2 sd = (vW.xz - uSunXZ) / vec2(4.2, 2.6);
+        float sunG = exp(-dot(sd, sd));
+        // 波の山だけが強く光る＝きらめく網目
+        float ripple = pow(smoothstep(-0.1, 0.8, h0), 3.0) + spark * 1.5;
+        col += uSky * sunG * ripple * uSunPower;
+        col += uSky * pow(sunG, 3.0) * uSunPower * 0.25;
         float dist = length(vW - cameraPosition);
         float fogF = 1.0 - exp(-uFogDensity * uFogDensity * dist * dist);
-        col = mix(col, uFogColor, fogF * 0.75);
+        col = mix(col, uFogColor, fogF * 0.75 * (1.0 - sunG * 0.7));
         col = mix(col, uEdge, smoothstep(-3.5, -7.9, vW.z));
         gl_FragColor = vec4(col, 1.0);
         #include <tonemapping_fragment>
@@ -164,13 +175,17 @@ export function createLightRays(cfg, rng) {
       varying float vSeed;
       varying vec3 vW;
       void main() {
-        float edge = pow(max(sin(vUv.x * 3.14159), 0.0), 2.2);
-        float fall = smoothstep(0.0, 0.8, vUv.y) * (0.4 + 0.6 * vUv.y * vUv.y);
-        float t = uTime * 0.18 + vSeed * 17.0;
-        float streak = 0.7 + 0.3 * sin(vUv.x * 5.0 + sin(t) * 2.0 + vSeed * 5.0) * sin(vUv.x * 2.3 - t * 0.7);
-        float pulse = 0.35 + 0.65 * pow(0.5 + 0.5 * sin(t * 0.9 + vSeed * 31.0), 1.6);
-        float a = edge * fall * streak * pulse * uIntensity;
-        float nearFade = smoothstep(2.5, 6.0, length(vW - cameraPosition));
+        float edge = pow(max(sin(vUv.x * 3.14159), 0.0), 1.6);
+        // 水面近くが最も明るく、深くなるほど拡散して消える
+        float fall = smoothstep(0.0, 0.55, vUv.y) * pow(vUv.y, 1.4);
+        float t = uTime * 0.16 + vSeed * 17.0;
+        // 束の中の細い筋がゆっくり流れる
+        float fib = 0.62 + 0.38 * sin(vUv.x * 7.0 + sin(t) * 2.4 + vSeed * 5.0) * sin(vUv.x * 3.1 - t * 0.8 + 1.3);
+        // 水面の波に合わせた明滅（ゆっくり・点滅しない）
+        float breathe = 0.55 + 0.45 * sin(uTime * 0.21 + vSeed * 31.0) * sin(uTime * 0.13 + vSeed * 7.0);
+        float shimmer = 0.9 + 0.1 * sin(vUv.y * 18.0 - uTime * 0.9 + vSeed * 9.0);
+        float a = edge * fall * fib * breathe * shimmer * uIntensity;
+        float nearFade = smoothstep(2.5, 7.0, length(vW - cameraPosition));
         gl_FragColor = vec4(uColor * a * nearFade, 1.0);
       }`,
     transparent: true,
@@ -181,16 +196,18 @@ export function createLightRays(cfg, rng) {
   });
   const count = cfg.count ?? 12;
   for (let i = 0; i < count; i++) {
-    const w = rng.float(1.2, 3.6);
+    const w = rng.float(0.5, 3.2) * (rng.next() < 0.3 ? 0.4 : 1);
     const h = cfg.height ?? 16;
     const g = new THREE.PlaneGeometry(w, h, 1, 1);
     g.translate(0, -h / 2, 0);
     const seed = new Float32Array(4).fill(rng.float(0, 1));
     g.setAttribute('aSeed', new THREE.BufferAttribute(seed, 1));
     const m = new THREE.Mesh(g, mat);
-    m.position.set(rng.float(-13, 13), cfg.top ?? 8.5, rng.float(-5, 2));
-    m.rotation.z = (cfg.tilt ?? -0.28) + rng.float(-0.06, 0.06);
-    m.rotation.y = rng.float(-0.25, 0.25);
+    // 太陽の入射点のまわりに集める
+    const cx = cfg.centerX ?? 0;
+    m.position.set(cx + rng.gauss() * (cfg.spread ?? 5), cfg.top ?? 8.5, rng.float(-5, 1.5));
+    m.rotation.z = (cfg.tilt ?? 0.3) + rng.float(-0.04, 0.04);
+    m.rotation.y = rng.float(-0.3, 0.3);
     m.renderOrder = 5;
     group.add(m);
   }
@@ -243,6 +260,7 @@ export function createParticles(cfg, rng) {
         float d = -mv.z;
         vA = smoothstep(1.5, 4.0, d) * (1.0 - smoothstep(14.0, 26.0, d));
         vA *= 0.6 + 0.4 * sin(uTime * 0.7 + aSeed * 9.0);
+        vA *= mix(0.55, 1.6, clamp(p.y / 8.5, 0.0, 1.0));
         gl_Position = projectionMatrix * mv;
       }`,
     fragmentShader: /* glsl */ `
