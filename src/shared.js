@@ -10,6 +10,8 @@ export const globalUniforms = {
   uCausticColor: { value: new THREE.Color(1, 1, 1) },
   uCurrent: { value: new THREE.Vector2(1, 0.25).normalize() },
   uSurfaceY: { value: 8 },
+  // 水の色ごとの吸収係数（赤が最も早く吸収される）
+  uAbsorb: { value: new THREE.Vector3(0.055, 0.022, 0.028) },
 };
 
 // ---------------------------------------------------------------------------
@@ -161,29 +163,44 @@ uniform float uCausticStrength;
 uniform float uCausticScale;
 uniform vec3 uCausticColor;
 uniform float uSurfaceY;
-float causticLayer(vec2 uv, float time) {
-  vec2 p = mod(uv * 6.28318, 6.28318) - 250.0;
-  vec2 i = p;
-  float c = 1.0;
-  float inten = 0.005;
-  for (int n = 0; n < 4; n++) {
-    float t = time * (1.0 - (3.5 / float(n + 1)));
-    i = p + vec2(cos(t - i.x) + sin(t + i.y), sin(t - i.y) + cos(t + i.x));
-    c += 1.0 / length(vec2(p.x / (sin(i.x + t) / inten), p.y / (cos(i.y + t) / inten)));
+vec2 cHash(vec2 p) {
+  p = vec2(dot(p, vec2(127.1, 311.7)), dot(p, vec2(269.5, 183.3)));
+  return fract(sin(p) * 43758.5453);
+}
+// 細胞の境界＝光が集まる線（水面の波がレンズになってできる網目）
+float causticNet(vec2 x, float t) {
+  // 二段の歪みで角を消し、波打つ線にする
+  x += 0.55 * vec2(sin(x.y * 0.9 + t * 0.8), cos(x.x * 0.8 - t * 0.7));
+  x += 0.18 * vec2(sin(x.y * 2.7 - t * 1.3), cos(x.x * 2.3 + t * 1.1));
+  vec2 n = floor(x), f = fract(x);
+  float d1 = 8.0, d2 = 8.0;
+  for (int j = -1; j <= 1; j++) {
+    for (int i = -1; i <= 1; i++) {
+      vec2 g = vec2(float(i), float(j));
+      vec2 o = cHash(n + g);
+      o = 0.5 + 0.42 * sin(t + 6.2831 * o);
+      vec2 r = g + o - f;
+      float d = dot(r, r);
+      if (d < d1) { d2 = d1; d1 = d; } else if (d < d2) { d2 = d; }
+    }
   }
-  c /= 4.0;
-  c = 1.17 - pow(c, 1.4);
-  return pow(abs(c), 8.0);
+  float edge = sqrt(d2) - sqrt(d1);
+  float core = pow(1.0 - smoothstep(0.0, 0.1, edge), 2.0);
+  float glow = pow(1.0 - smoothstep(0.0, 0.34, edge), 3.0);
+  return core + glow * 0.45;
 }
 vec3 causticAt(vec3 wp) {
   // 光源の傾きに沿って投影し、深さに応じてぼかす
-  vec2 base = (wp.xz + vec2(0.35, 0.2) * (uSurfaceY - wp.y)) * uCausticScale;
-  float t = uTime * 0.42;
-  float g = causticLayer(base, t);
-  float r2 = causticLayer(base * 0.63 + 0.37, t * 0.8);
-  vec3 c = vec3(g * 0.95, g, g * 1.05) * 0.8 + r2 * 0.35;
-  float depthFade = clamp(1.0 - (uSurfaceY - wp.y) * 0.035, 0.45, 1.0);
-  return c * uCausticColor * depthFade;
+  float depth = uSurfaceY - wp.y;
+  vec2 base = (wp.xz + vec2(0.3, -0.12) * depth) * uCausticScale * 12.0;
+  float t = uTime * 0.55;
+  float a = causticNet(base, t);
+  float b = causticNet(base * 0.62 + 17.3, t * 0.8 + 3.0);
+  float net = max(a, b * 0.8) + a * b * 0.6;
+  // 浅いほどくっきり、深いほど淡く
+  float fade = clamp(1.0 - depth * 0.04, 0.35, 1.0);
+  // わずかな色の分散（虹色のにじみ）
+  return vec3(net * 0.97, net, net * 1.04) * uCausticColor * fade;
 }
 `;
 
@@ -271,8 +288,10 @@ export function patchMaterial(material, opts = {}) {
         {
           vec3 cst = causticAt(vCWorld);
           float facing = smoothstep(-0.35, 0.9, vCNy);
-          reflectedLight.directDiffuse *= 1.0 + cst * uCausticStrength * facing * ${k.toFixed(3)};
-          reflectedLight.directSpecular *= 1.0 + cst * uCausticStrength * facing * ${(k * 0.5).toFixed(3)};
+          float ck = facing * ${k.toFixed(3)};
+          vec3 cmul = mix(vec3(1.0), vec3(0.5) + cst * uCausticStrength, ck);
+          reflectedLight.directDiffuse *= cmul;
+          reflectedLight.directSpecular *= mix(vec3(1.0), vec3(0.8) + cst * uCausticStrength * 0.5, ck);
         }`
       );
     }

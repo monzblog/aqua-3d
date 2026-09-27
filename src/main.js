@@ -31,12 +31,14 @@ THREE.ShaderChunk.fog_vertex = THREE.ShaderChunk.fog_vertex.replace(
 );
 THREE.ShaderChunk.fog_pars_fragment = THREE.ShaderChunk.fog_pars_fragment.replace(
   'varying float vFogDepth;',
-  'varying float vFogDepth;\nvarying float vFogWorldY;'
+  'varying float vFogDepth;\nvarying float vFogWorldY;\nuniform vec3 uAbsorb;'
 );
-THREE.ShaderChunk.fog_fragment = THREE.ShaderChunk.fog_fragment.replace(
-  'gl_FragColor.rgb = mix( gl_FragColor.rgb, fogColor, fogFactor );',
-  'vec3 fogC = fogColor * mix(0.68, 1.22, smoothstep(0.0, 8.5, vFogWorldY));\n\tgl_FragColor.rgb = mix( gl_FragColor.rgb, fogC, fogFactor );'
-);
+// 色ごとの吸収（ベール＝ランベルト則）：遠いものほど白く濁るのではなく、エメラルド／青に沈む
+THREE.ShaderChunk.fog_fragment = `#ifdef USE_FOG
+  vec3 fogT = exp(-uAbsorb * vFogDepth);
+  vec3 fogC = fogColor * mix(0.7, 1.25, smoothstep(0.0, 8.5, vFogWorldY));
+  gl_FragColor.rgb = gl_FragColor.rgb * fogT + fogC * (1.0 - fogT);
+#endif`;
 
 // ---------------------------------------------------------------------------
 // 品質設定
@@ -115,7 +117,9 @@ const finalPass = new ShaderPass({
       col.g = texture2D(tDiffuse, vUv).g;
       col.b = texture2D(tDiffuse, vUv + d * ca).b;
       // やわらかいコントラストと周辺減光
-      col = mix(col, col * col * (3.0 - 2.0 * col), 0.18);
+      col = mix(col, col * col * (3.0 - 2.0 * col), 0.2);
+      float luma = dot(col, vec3(0.2126, 0.7152, 0.0722));
+      col = mix(vec3(luma), col, 1.14);
       float vig = smoothstep(0.95, 0.2, sqrt(r2) * 1.05);
       col *= mix(0.72, 1.0, vig);
       col *= uTint;
@@ -254,6 +258,8 @@ function applyMode(key) {
   globalUniforms.uSurfaceY.value = c.surfaceY;
   globalUniforms.uCausticStrength.value = c.caustic.strength;
   globalUniforms.uCausticColor.value.set(c.caustic.color);
+  globalUniforms.uCausticScale.value = c.caustic.scale ?? 0.16;
+  globalUniforms.uAbsorb.value.set(...c.water.absorb);
   renderer.toneMappingExposure = c.exposure;
   bloom.strength = c.bloom.strength;
   bloom.radius = c.bloom.radius;
