@@ -14,10 +14,12 @@ const shotPlugin = {
       req.on('end', () => {
         const url = new URL(req.url, 'http://x');
         const name = (url.searchParams.get('name') || 'shot').replace(/[^\w-]/g, '');
-        const dir = process.env.SHOT_DIR || path.resolve('.shots');
+        const sub = (url.searchParams.get('dir') || '').replace(/[^\w-]/g, '');
+        const ext = url.searchParams.get('ext') === 'jpg' ? 'jpg' : 'png';
+        const dir = path.join(process.env.SHOT_DIR || path.resolve('.shots'), sub);
         fs.mkdirSync(dir, { recursive: true });
         const b64 = Buffer.concat(chunks).toString().replace(/^data:image\/\w+;base64,/, '');
-        fs.writeFileSync(path.join(dir, `${name}.png`), Buffer.from(b64, 'base64'));
+        fs.writeFileSync(path.join(dir, `${name}.${ext}`), Buffer.from(b64, 'base64'));
         res.end('ok');
       });
     });

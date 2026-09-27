@@ -342,6 +342,7 @@ function resize() {
 window.addEventListener('resize', resize);
 
 const clock = new THREE.Clock();
+let camOverride = null; // 開発時の動画書き出し用
 let t = 0;
 // 解像度調整：起動時のフェード中に一度だけ計測して決める。
 // 実行中は長く重い状態が続いたときだけ、フェードで隠して一段下げる（描画バッファ再確保のちらつき防止）
@@ -411,8 +412,9 @@ function tick(dt) {
   finalPass.uniforms.uTime.value = t;
 
   // ごくわずかな浮遊感（ドキュメンタリーのカメラのような揺れ）
-  camera.position.set(camBase.x + Math.sin(t * 0.07) * 0.18, camBase.y + Math.sin(t * 0.11) * 0.07, camBase.z + Math.sin(t * 0.05) * 0.12);
-  camera.lookAt(camLook.x + Math.sin(t * 0.06 + 1) * 0.12, camLook.y, camLook.z);
+  if (camOverride) camOverride(camera, t);
+  else camera.position.set(camBase.x + Math.sin(t * 0.07) * 0.18, camBase.y + Math.sin(t * 0.11) * 0.07, camBase.z + Math.sin(t * 0.05) * 0.12);
+  if (!camOverride) camera.lookAt(camLook.x + Math.sin(t * 0.06 + 1) * 0.12, camLook.y, camLook.z);
 
   if (current) {
     for (const s of current.schools) s.update(dt, t, current.schools);
@@ -456,6 +458,25 @@ if (import.meta.env.DEV) {
     get current() { return current; },
     switchMode,
     tick,
+    // 動画用：カメラ経路 fn(camera, u) を u=0..1 で与え、コマを JPEG で書き出す
+    async record(dir, w, h, start, count, total, path, warm = 0) {
+      renderer.setAnimationLoop(null);
+      Object.defineProperty(window, 'innerWidth', { value: w, configurable: true });
+      Object.defineProperty(window, 'innerHeight', { value: h, configurable: true });
+      pixelRatio = 1;
+      renderer.setPixelRatio(1);
+      composer.setPixelRatio(1);
+      resize();
+      for (let i = 0; i < warm; i++) tick(1 / 30);
+      for (let i = start; i < Math.min(start + count, total); i++) {
+        camOverride = (cam) => path(cam, i / (total - 1));
+        tick(1 / 30);
+        const url = renderer.domElement.toDataURL('image/jpeg', 0.93);
+        await fetch(`/__shot?dir=${dir}&ext=jpg&name=f_${String(i).padStart(4, '0')}`, { method: 'POST', body: url });
+      }
+      camOverride = null;
+      return Math.min(start + count, total);
+    },
     async shot(name, w = 1280, h = 720, frames = 30, cam = null) {
       renderer.setAnimationLoop(null);
       const saved = [window.innerWidth, window.innerHeight];
